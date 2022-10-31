@@ -1,0 +1,73 @@
+name: Build
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+  push:
+    branches:
+      - master
+
+env:
+  IMAGE_NAME: uvdesk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📁 Checkout
+        uses: actions/checkout@v3
+        with:
+          repository: uvdesk/community-skeleton
+          ref: refs/heads/2.0
+
+      - name: 💻 Set Environment Variables
+        run: |
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "BUILD_DATE=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${OWNER}/${{ env.IMAGE_NAME }}" >> $GITHUB_ENV
+          echo "GIT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_ENV
+          echo "GIT_REF=$(git symbolic-ref -q --short HEAD || git describe --tags --exact-match)" >> $GITHUB_ENV
+
+      - name: ⚙️ Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: 🐬 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: 🔒 Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Cache buildx
+        uses: actions/cache@v3
+        env:
+          cache-name: ${{ github.workflow }}-${{ github.ref }}
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.cache-name }}-
+
+      - name: 🏗️ Build and push
+        uses: docker/build-push-action@v3
+        with:
+          platforms: linux/amd64
+          push: true
+          labels: |
+            org.opencontainers.image.authors=${{ github.repository_owner }}
+            org.opencontainers.image.created=${{ env.BUILD_DATE }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache
+
